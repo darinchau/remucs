@@ -1,0 +1,6 @@
+[submodule "AutoMasher"]
+	path = AutoMasher
+	url = https://github.com/darinchau/AutoMasher
+[submodule "wavenet_vocoder"]
+	path = wavenet_vocoder
+	url = https://github.com/darinchau/wavenet_vocoder.git
