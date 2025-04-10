@@ -1,33 +1,13 @@
 # Implements VQVAE encoder and decoder model to convert spectrogram to latent space and back to spectrogram.
-# Reference: https://github.com/explainingai-code/StableDiffusion-PyTorch
+# Code in part referenced from https://github.com/explainingai-code/StableDiffusion-PyTorch
 
 import torch
 from torch import nn, Tensor
+from torch.utils.checkpoint import checkpoint
 from dataclasses import dataclass
 import torch.functional as F
 from AutoMasher.fyp.audio.base.audio_collection import DemucsCollection
-
-
-def get_time_embedding(time_steps: Tensor, temb_dim: int):
-    r"""
-    Convert time steps tensor into an embedding using the
-    sinusoidal time embedding formula
-    :param time_steps: 1D tensor of length batch size
-    :param temb_dim: Dimension of the embedding
-    :return: BxD embedding representation of B time steps
-    """
-    assert temb_dim % 2 == 0, "time embedding dimension must be divisible by 2"
-
-    # factor = 10000^(2i/d_model)
-    factor = 10000 ** ((torch.arange(
-        start=0, end=temb_dim // 2, dtype=torch.float32, device=time_steps.device) / (temb_dim // 2))
-    )
-
-    # pos / factor
-    # timesteps B -> B, 1 -> B, temb_dim
-    t_emb = time_steps[:, None].repeat(1, temb_dim // 2) / factor
-    t_emb = torch.cat([torch.sin(t_emb), torch.cos(t_emb)], dim=-1)
-    return t_emb
+from ..config import VAEConfig
 
 
 class DownBlock(nn.Module):
@@ -38,6 +18,7 @@ class DownBlock(nn.Module):
     2. Attention block
     3. Downsample
     """
+
     def __init__(self, in_channels, out_channels, down_sample, num_heads, num_layers, attn, norm_channels, use_gradient_checkpointing=False):
         super().__init__()
         self.use_gradient_checkpointing = use_gradient_checkpointing
@@ -288,111 +269,20 @@ class UpBlock(nn.Module):
         return out
 
 
-@dataclass
-class VQVAEConfig:
-    down_channels: list[int]
-    mid_channels: list[int]
-    down_sample: list[bool]
-    num_down_layers: int
-    num_mid_layers: int
-    num_up_layers: int
-    attn_down: list[bool]
-    z_channels: int
-    codebook_size: int
-    norm_channels: int
-    num_heads: int
-    gradient_checkpointing: bool
+class QuantizeModule(nn.Module):
+    """Takes in x of shape (B, C, H, W) and returns quantized output and indices
 
+    Returns:
+        quant_out: Tensor of shape (B, C, H, W)
+        quantize_losses: dict with 'codebook_loss' and 'commitment_loss'
+        min_encoding_indices: Tensor of shape (B, H*W)
+    """
 
-class VQVAE(nn.Module):
-    def __init__(self, im_channels, model_config: VQVAEConfig):
+    def __init__(self, codebook_size: int, z_channels: int):
         super().__init__()
-        self.down_channels = model_config.down_channels
-        self.mid_channels = model_config.mid_channels
-        self.down_sample = model_config.down_sample
-        self.num_down_layers = model_config.num_down_layers
-        self.num_mid_layers = model_config.num_mid_layers
-        self.num_up_layers = model_config.num_up_layers
-        self.gradient_checkpointing = model_config.gradient_checkpointing
+        self.codebook = nn.Embedding(codebook_size, z_channels)
 
-        # self.attns[i] is True if attention is used in ith down block
-        self.attns = model_config.attn_down
-
-        # Latent Dimension
-        self.z_channels = model_config.z_channels
-        self.codebook_size = model_config.codebook_size
-        self.norm_channels = model_config.norm_channels
-        self.num_heads = model_config.num_heads
-
-        # Assertion to validate the channel information
-        assert self.mid_channels[0] == self.down_channels[-1]
-        assert self.mid_channels[-1] == self.down_channels[-1]
-        assert len(self.down_sample) == len(self.down_channels) - 1
-        assert len(self.attns) == len(self.down_channels) - 1
-
-        # Reverse the downsample list to get upsample list
-        self.up_sample = list(reversed(self.down_sample))
-
-        ##################### Encoder ######################
-        self.encoder_conv_in = nn.Conv2d(im_channels, self.down_channels[0], kernel_size=3, padding=(1, 1))
-
-        # Downblock + Midblock
-        self.encoder_layers = nn.ModuleList([])
-        for i in range(len(self.down_channels) - 1):
-            self.encoder_layers.append(DownBlock(self.down_channels[i], self.down_channels[i + 1],
-                                                 down_sample=self.down_sample[i],
-                                                 num_heads=self.num_heads,
-                                                 num_layers=self.num_down_layers,
-                                                 attn=self.attns[i],
-                                                 norm_channels=self.norm_channels,
-                                                 use_gradient_checkpointing=self.gradient_checkpointing))
-
-        self.encoder_mids = nn.ModuleList([])
-        for i in range(len(self.mid_channels) - 1):
-            self.encoder_mids.append(MidBlock(self.mid_channels[i], self.mid_channels[i + 1],
-                                              num_heads=self.num_heads,
-                                              num_layers=self.num_mid_layers,
-                                              norm_channels=self.norm_channels,
-                                              use_gradient_checkpointing=self.gradient_checkpointing))
-
-        self.encoder_norm_out = nn.GroupNorm(self.norm_channels, self.down_channels[-1])
-        self.encoder_conv_out = nn.Conv2d(self.down_channels[-1], self.z_channels, kernel_size=3, padding=1)
-
-        # Pre Quantization Convolution
-        self.pre_quant_conv = nn.Conv2d(self.z_channels, self.z_channels, kernel_size=1)
-
-        # Codebook
-        self.codebook = nn.Embedding(self.codebook_size, self.z_channels)
-
-        ##################### Decoder ######################
-
-        # Post Quantization Convolution
-        self.post_quant_conv = nn.Conv2d(self.z_channels, self.z_channels, kernel_size=1)
-        self.decoder_conv_in = nn.Conv2d(self.z_channels, self.mid_channels[-1], kernel_size=3, padding=(1, 1))
-
-        # Midblock + Upblock
-        self.decoder_mids = nn.ModuleList([])
-        for i in reversed(range(1, len(self.mid_channels))):
-            self.decoder_mids.append(MidBlock(self.mid_channels[i], self.mid_channels[i - 1],
-                                              num_heads=self.num_heads,
-                                              num_layers=self.num_mid_layers,
-                                              norm_channels=self.norm_channels,
-                                              use_gradient_checkpointing=self.gradient_checkpointing))
-
-        self.decoder_layers = nn.ModuleList([])
-        for i in reversed(range(1, len(self.down_channels))):
-            self.decoder_layers.append(UpBlock(self.down_channels[i], self.down_channels[i - 1],
-                                               up_sample=self.down_sample[i - 1],
-                                               num_heads=self.num_heads,
-                                               num_layers=self.num_up_layers,
-                                               attn=self.attns[i-1],
-                                               norm_channels=self.norm_channels,
-                                               use_gradient_checkpointing=self.gradient_checkpointing))
-
-        self.decoder_norm_out = nn.GroupNorm(self.norm_channels, self.down_channels[0])
-        self.decoder_conv_out = nn.Conv2d(self.down_channels[0], im_channels, kernel_size=3, padding=1)
-
-    def quantize(self, x):
+    def forward(self, x: torch.Tensor):
         B, C, H, W = x.shape
 
         # B, C, H, W -> B, H, W, C
@@ -427,7 +317,104 @@ class VQVAE(nn.Module):
         min_encoding_indices = min_encoding_indices.reshape((-1, quant_out.size(-2), quant_out.size(-1)))
         return quant_out, quantize_losses, min_encoding_indices
 
-    def encode(self, x):
+
+class VAEOutput:
+    def __init__(self, output: Tensor, z: Tensor, codebook_loss: Tensor, commitment_loss: Tensor):
+        self.output = output
+        self.z = z
+        self.codebook_loss = codebook_loss
+        self.commitment_loss = commitment_loss
+
+
+class RVQVAE(nn.Module):
+    def __init__(self, config: VAEConfig):
+        super().__init__()
+        self.config = config
+
+        # Assertion to validate the channel information
+        assert self.config.mid_channels[0] == self.config.down_channels[-1]
+        assert self.config.mid_channels[-1] == self.config.down_channels[-1]
+        assert len(self.config.down_sample) == len(self.config.down_channels) - 1
+        assert len(self.config.attn_down) == len(self.config.down_channels) - 1
+
+        self.up_sample = list(reversed(self.config.down_sample))
+        self.init_encoder()
+        self.init_decoder()
+
+    def init_encoder(self):
+        self.encoder_conv_in = nn.Conv2d(self.config.nsources, self.config.down_channels[0], kernel_size=3, padding=(1, 1))
+
+        # Downblock + Midblock
+        self.encoder_layers = nn.ModuleList([])
+        for i in range(len(self.config.down_channels) - 1):
+            self.encoder_layers.append(DownBlock(
+                self.config.down_channels[i],
+                self.config.down_channels[i + 1],
+                down_sample=self.config.down_sample[i],
+                num_heads=self.config.num_heads,
+                num_layers=self.config.num_down_layers,
+                attn=self.config.attn_down[i],
+                norm_channels=self.config.norm_channels,
+                use_gradient_checkpointing=self.config.gradient_checkpointing
+            ))
+
+        self.encoder_mids = nn.ModuleList([])
+        for i in range(len(self.config.mid_channels) - 1):
+            self.encoder_mids.append(MidBlock(
+                self.config.mid_channels[i],
+                self.config.mid_channels[i + 1],
+                num_heads=self.config.num_heads,
+                num_layers=self.config.num_mid_layers,
+                norm_channels=self.config.norm_channels,
+                use_gradient_checkpointing=self.config.gradient_checkpointing
+            ))
+
+        self.encoder_norm_out = nn.GroupNorm(self.config.norm_channels, self.config.down_channels[-1])
+        self.encoder_conv_out = nn.Conv2d(self.config.down_channels[-1], self.config.z_channels, kernel_size=3, padding=1)
+
+        # Pre Quantization Convolution
+        self.pre_quant_conv = nn.Conv2d(self.config.z_channels, self.config.z_channels, kernel_size=1)
+
+        # Codebook
+        self.quants = nn.ModuleList([
+            QuantizeModule(codebook_size=self.config.codebook_size, z_channels=self.config.z_channels)
+            for _ in range(self.config.nquantizers)
+        ])
+
+    def init_decoder(self):
+        # Post Quantization Convolution
+        self.post_quant_conv = nn.Conv2d(self.config.z_channels, self.config.z_channels, kernel_size=1)
+        self.decoder_conv_in = nn.Conv2d(self.config.z_channels, self.config.mid_channels[-1], kernel_size=3, padding=(1, 1))
+
+        # Midblock + Upblock
+        self.decoder_mids = nn.ModuleList([])
+        for i in reversed(range(1, len(self.config.mid_channels))):
+            self.decoder_mids.append(MidBlock(
+                self.config.mid_channels[i],
+                self.config.mid_channels[i - 1],
+                num_heads=self.config.num_heads,
+                num_layers=self.config.num_mid_layers,
+                norm_channels=self.config.norm_channels,
+                use_gradient_checkpointing=self.config.gradient_checkpointing
+            ))
+
+        self.decoder_layers = nn.ModuleList([])
+        for i in reversed(range(1, len(self.config.down_channels))):
+            self.decoder_layers.append(UpBlock(
+                self.config.down_channels[i],
+                self.config.down_channels[i - 1],
+                up_sample=self.config.down_sample[i - 1],
+                num_heads=self.config.num_heads,
+                num_layers=self.config.num_up_layers,
+                attn=self.config.attn_down[i-1],
+                norm_channels=self.config.norm_channels,
+                use_gradient_checkpointing=self.config.gradient_checkpointing
+            ))
+
+        self.decoder_norm_out = nn.GroupNorm(self.config.norm_channels, self.config.down_channels[0])
+        self.decoder_conv_out = nn.Conv2d(self.config.down_channels[0], self.config.nsources, kernel_size=3, padding=1)
+
+    def encode(self, x: Tensor):
         out = self.encoder_conv_in(x)
         for idx, down in enumerate(self.encoder_layers):
             out = down(out)
@@ -437,7 +424,20 @@ class VQVAE(nn.Module):
         out = nn.SiLU()(out)
         out = self.encoder_conv_out(out)
         out = self.pre_quant_conv(out)
-        out, quant_losses, _ = self.quantize(out)
+        quant_losses = {
+            "codebook_loss": 0.0,
+            "commitment_loss": 0.0
+        }
+        residual = out
+        for idx, quant in enumerate(self.quants):
+            quant_out, q_losses, _ = quant(residual)
+            quant_losses["codebook_loss"] += q_losses["codebook_loss"]
+            quant_losses["commitment_loss"] += q_losses["commitment_loss"]
+            if idx == 0:
+                out = quant_out
+            else:
+                out += quant_out
+            residual -= quant_out
         return out, quant_losses
 
     def decode(self, z):
@@ -457,53 +457,9 @@ class VQVAE(nn.Module):
     def forward(self, x):
         z, quant_losses = self.encode(x)
         out = self.decode(z)
-        return out, z, quant_losses
-
-class SpectrogramPatchModel(nn.Module):
-    """This uses the idea of PatchGAN but changes the architecture to use Conv2d layers on each bar (4, 128, 512) patches
-
-    Assumes input is of shape (B, 4, 512, 512), outputs a tensor of shape (B, 4, 4)"""
-
-    def __init__(self, target_features: int):
-        super(SpectrogramPatchModel, self).__init__()
-        # Define a simple CNN architecture for each patch
-        self.conv1 = nn.Conv2d(4, 16, kernel_size=3, padding=1)  # Output: (B, 16, 128, 512)
-        self.pool11 = nn.AdaptiveMaxPool2d((128, 256))
-        self.pool12 = nn.AdaptiveAvgPool2d((64, 256))
-        self.conv2 = nn.Conv2d(16, 32, kernel_size=3, padding=1)  # Output: (B, 32, 64, 256)
-        self.pool21 = nn.AdaptiveMaxPool2d((64, 128))
-        self.pool22 = nn.AdaptiveAvgPool2d((32, 128))
-        self.conv3 = nn.Conv2d(32, 64, kernel_size=3, padding=1)  # Output: (B, 64, 32, 128)
-        self.pool31 = nn.AdaptiveMaxPool2d((32, 32))
-        self.pool32 = nn.AdaptiveAvgPool2d((8, 32))
-        self.conv4 = nn.Conv2d(64, 128, kernel_size=3, padding=1)  # Output: (B, 128, 8, 32)
-        self.fc = nn.Conv2d(128, 4, (8, 32))  # Equivalent to FC layers over each channel
-        self.target_features = target_features
-
-    def forward(self, x: Tensor):
-        # x shape: (B, 4, 512, 512)
-        # Splitting along the T axis into 4 patches
-        patches = x.unflatten(2, (x.size(2) // 128, 128))  # Output: (B, 4, 4, 128, 512)
-
-        # Process each patch
-        batch_size, num_patches, channels, height, width = patches.size()
-        patches = patches.reshape(-1, channels, height, width)  # Flatten patches for batch processing
-
-        # Apply CNN
-        x = self.conv1(patches)
-        x = F.relu(x)
-        x = self.pool11(x)
-        x = self.pool12(x)
-        x = self.conv2(x)
-        x = F.relu(x)
-        x = self.pool21(x)
-        x = self.pool22(x)
-        x = self.conv3(x)
-        x = F.relu(x)
-        x = self.pool31(x)
-        x = self.pool32(x)
-        x = self.conv4(x)
-        x = F.relu(x)
-        x = self.fc(x)
-        x = x.view(batch_size, num_patches, channels, -1).squeeze(-1).squeeze(-1)
-        return x
+        return VAEOutput(
+            output=out,
+            z=z,
+            codebook_loss=quant_losses["codebook_loss"],
+            commitment_loss=quant_losses["commitment_loss"]
+        )

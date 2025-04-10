@@ -1,25 +1,28 @@
 # Config file for autoencoder training
 
 nbars: 4 # Number of bars in the input
-nsources : 4 # Number of sources in the input
-nchannels: 2 # Number of channels in the input
+nsources : 8 # Number of sources in the input
 num_workers_ds : 0 # Number of workers for loading the dataset
 dataset_dir: "D:/audio-dataset-v3" # Directory containing the dataset
-output_dir: "D:/output" # Directory to save the output
+output_dir: "D:/output" # Directory to save the trained models and checkpoints
 val_count: 100 # Number of validation samples
 sample_rate: 48000 # Sample rate of the audio
-splice_size: 195072 # Number of frames in each splice. Has to be somewhat carefully chosen. 195072 is around 4 seconds and it turns into 512 vector embeds
+ntimeframes: 768
+nfft: 1025 # FFT size for spectrogram
 
+z_channels: 4 # Number of channels in the latent space
+codebook_size: 1024 # Size of the codebook for VQ-VAE
+nquantizers: 4 # Number of quantizers
 down_channels : [32, 64, 128, 128] # Number of channels in each downsampling layer
 mid_channels : [128, 128] # Number of channels in each middle layer
 down_sample : [2, 2, 4] # Downsampling factors for each downsampling layer
+attn_down : [False, False, False] # Whether to use attention in each downsampling layer
 norm_channels: 32 # Number of channels for normalization
 num_heads: 4 # Number of attention heads
 num_down_layers : 2 # Number of downsampling layers
 num_mid_layers : 2 # Number of middle layers
 num_up_layers : 2 # Number of upsampling layers
 gradient_checkpointing : True # Whether to use gradient checkpointing
-kl_mean: True # Whether to use the mean reduction for the KL divergence
 
 seed : 1943 # Random seed
 num_workers_dl: 0 # Number of workers for data loading

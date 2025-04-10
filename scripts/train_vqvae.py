@@ -16,10 +16,9 @@ from torch.amp.autocast_mode import autocast
 import wandb
 import pickle
 from accelerate import Accelerator
-from remucs.model.vae import VQVAE, VQVAEConfig
-from remucs.model.vae import SpectrogramPatchModel as Discriminator
-from remucs.model.lpips import load_lpips
-from remucs.spectrogram import load_dataset
+from math import isclose
+from remucs.model.vae import RVQVAE as VAE
+from remucs.config import VAEConfig
 import torch.nn.functional as F
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -31,15 +30,7 @@ TEST_SPLIT_PERCENTAGE = 0.1
 
 assert isclose(TRAIN_SPLIT_PERCENTAGE + VALIDATION_SPLIT_PERCENTAGE + TEST_SPLIT_PERCENTAGE, 1.0)
 
-
-def read_config(config_path: str):
-    with open(config_path, 'r') as file:
-        try:
-            config = yaml.safe_load(file)
-        except yaml.YAMLError as exc:
-            print(exc)
-            exit(1)
-    return config
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
 def set_seed(seed: int):
@@ -53,7 +44,6 @@ def set_seed(seed: int):
 def train(config_path: str, base_dir: str, *, start_from_iter: int = 0,
           dataset_params=None, train_params=None, autoencoder_params=None):
     """Retrains the discriminator. If discriminator is None, a new discriminator is created based on the PatchGAN architecture."""
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     config = read_config(config_path)
     if dataset_params is not None:
@@ -83,7 +73,7 @@ def train(config_path: str, base_dir: str, *, start_from_iter: int = 0,
             print(f"Lookup table not found at {lookup_table_path}")
             exit(1)
 
-    vae_config = VQVAEConfig(**config['autoencoder_params'])
+    vae_config = VAEConfig(**config['autoencoder_params'])
 
     dataset_config = config['dataset_params']
     train_config = config['train_params']
