@@ -1,0 +1,37 @@
+output_dir: "ddpm"
+train_batch_size: 4
+eval_batch_size: 4
+dataloader_num_workers: 0
+num_epochs: 3
+save_model_steps: 512
+gradient_accumulation_steps: 1
+learning_rate: 0.0001
+lr_scheduler: "cosine"
+lr_warmup_steps: 500
+adam_beta1: 0.95
+adam_beta2: 0.999
+adam_weight_decay: 0.000001
+adam_epsilon: 1.0e-08
+use_ema: true
+ema_inv_gamma: 1.0
+ema_power: 0.75
+ema_max_decay: 0.9999
+pe_norm_loss_weight: 0.2
+mixed_precision: "bf16"
+checkpointing_steps: 512
+checkpoints_total_limit: 10
+resume_from_checkpoint: null
+enable_xformers_memory_efficient_attention: false
+acc_seed: 1943
+
+nbars: 4
+credentials_path: "./resources/key/key.json"
+bucket_name: "project-remucs-spectrograms-1"
+cache_dir: "./resources/spec_cache"
+dataset_dir: "./resources/test_specs"
+load_first_n_data: 30
+
+model_id: "CompVis/stable-diffusion-v1-4"
+initial_prompt: "spectrograms"
+freeze_initial_prompt: true
+project_name: "train-unet"
