@@ -1,7 +1,7 @@
 # Config file for autoencoder training
 
 nbars: 4 # Number of bars in the input
-nsources : 8 # Number of sources in the input
+nsources : 8 # Number of sources in the input - because semantics this should be 2 times that
 num_workers_ds : 0 # Number of workers for loading the dataset
 dataset_dir: "D:/audio-dataset-v3" # Directory containing the dataset
 output_dir: "D:/output" # Directory to save the trained models and checkpoints
@@ -35,6 +35,11 @@ perceptual_weight: 1 # Weight for the perceptual loss
 epochs: 2 # Number of training epochs
 autoencoder_lr: 0.00001 # Learning rate for the autoencoder
 autoencoder_acc_steps: 16 # Number of accumulation steps for the autoencoder
+ndiscriminators: 4 # Number of audio discriminaotrs
+nfilters: 1024 # Number of filters in the audio discriminators
+naudio_disc_layers: 4 # Number of layers in each audio discriminaotrs
+audio_disc_downsampling_factor: 4 # Down sampling factor between each audio discriminator
+nspec_disc_patches: 4 # Number of time patches to operate with in the spectrogrm disciminaotr
 save_steps: 512 # Number of steps between saving images
 vqvae_autoencoder_ckpt_name: 'vqvae_autoencoder_ckpt.pth' # Checkpoint name for the VQ-VAE autoencoder
 run_name: "vqvae-training" # Name of the training run

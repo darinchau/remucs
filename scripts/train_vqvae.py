@@ -21,8 +21,9 @@ from torch.amp.autocast_mode import autocast
 from accelerate import Accelerator
 from math import isclose
 from remucs.model.vae import RVQVAE as VAE, VAEOutput
+from remucs.model.vggish import Vggish
+from remucs.model.discriminator import Discriminator
 from remucs.config import VAEConfig
-from remucs.model.lpips import load_lpips
 from AutoMasher.fyp import SongDataset, YouTubeURL, Audio
 from AutoMasher.fyp.audio import DemucsCollection
 from remucs.stft import STFT
@@ -68,6 +69,30 @@ class VQVAEDataset(torch.utils.data.Dataset):
         ).data.squeeze(1)  # Shape: (nsource=4, L)
 
         return parts
+
+
+def load_lpips(config: VAEConfig):
+    class _PerceptualLossWrapper(nn.Module):
+        def __init__(self, stride: int):
+            super().__init__()
+            self.lpips = Vggish()
+            self.stride = stride
+
+        def forward(self, pred_audio, targ_audio):
+            pred_audio = pred_audio.unflatten(-1, (-1, self.stride)).mean(dim=-1)
+            targ_audio = targ_audio.unflatten(-1, (-1, self.stride)).mean(dim=-1)
+            pred = self.lpips((pred_audio, 16000))
+            targ = self.lpips((targ_audio, 16000))
+            return F.mse_loss(pred, targ)
+
+    assert config.sample_rate % 16000 == 0, f"Sample rate must be an integer multiple of the VGGish sample rate (16000)"
+    model = _PerceptualLossWrapper(config.sample_rate // 16000)
+    model = model.eval().to(device)
+
+    for p in model.parameters():
+        p.requires_grad = False
+
+    return model
 
 
 def set_seed(seed: int):
@@ -152,13 +177,9 @@ def train(config_path: str, start_from_iter: int = 0):
 
     reconstruction_loss = torch.nn.MSELoss()
     disc_loss = torch.nn.BCEWithLogitsLoss() if config.disc_loss == 'bce' else torch.nn.MSELoss()
-    perceptual_loss = load_lpips().eval().to(device)
+    perceptual_loss = load_lpips(config)
 
-    # Freeze perceptual loss parameters
-    for param in perceptual_loss.parameters():
-        param.requires_grad = False
-
-    discriminator = Discriminator().to(device)
+    discriminator = Discriminator(config).to(device)
 
     optimizer_d = Adam(discriminator.parameters(), lr=config.autoencoder_lr, betas=(0.5, 0.999))
     optimizer_g = Adam(model.parameters(), lr=config.autoencoder_lr, betas=(0.5, 0.999))
@@ -196,7 +217,8 @@ def train(config_path: str, start_from_iter: int = 0):
             step_count += 1
 
             assert isinstance(target_audio, torch.Tensor)
-            assert target_audio.dim() == 3  # im shape: B, 4, L
+            assert target_audio.dim() == 3  # im shape: B, nsources/2=4, L
+            assert target_audio.shape[1] == config.nsources / 2
 
             batch_size = target_audio.shape[0]
             target_audio = target_audio.float().to(device)
@@ -227,8 +249,10 @@ def train(config_path: str, start_from_iter: int = 0):
 
             # Adversarial loss only if disc_step_start steps passed
             if step_count > config.disc_start:
-                disc_fake_pred: Tensor = discriminator(pred_audio, pred_spec)
-                disc_fake_loss = disc_loss(disc_fake_pred, torch.zeros(disc_fake_pred.shape, device=disc_fake_pred.device))
+                disc_fake_preds: list[Tensor] = discriminator(pred_audio, pred_spec)
+                disc_fake_loss = sum(
+                    disc_loss(x, torch.zeros_like(x)) for x in disc_fake_preds
+                )
                 g_loss += config.disc_weight * disc_fake_loss / config.autoencoder_acc_steps
 
             # Perceptual Loss
@@ -243,8 +267,8 @@ def train(config_path: str, start_from_iter: int = 0):
             if step_count > config.disc_start:
                 disc_fake_pred: Tensor = discriminator(pred_audio, pred_spec)
                 disc_real_pred: Tensor = discriminator(target_audio, target_spec)
-                disc_fake_loss = disc_loss(disc_fake_pred, torch.zeros(disc_fake_pred.shape, device=disc_fake_pred.device))
-                disc_real_loss = disc_loss(disc_real_pred, torch.ones(disc_real_pred.shape, device=disc_real_pred.device))
+                disc_fake_loss = disc_loss(disc_fake_pred, torch.zeros_like(disc_fake_pred))
+                disc_real_loss = disc_loss(disc_real_pred, torch.ones_like(disc_real_pred))
                 disc_loss = config.disc_weight * (disc_fake_loss + disc_real_loss) / 2
                 disc_losses.append(disc_loss.item())
                 disc_loss = disc_loss / config.autoencoder_acc_steps

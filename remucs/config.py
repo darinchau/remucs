@@ -2,6 +2,7 @@ import os
 from dataclasses import dataclass, asdict
 from typing import List
 import yaml
+from .stft import STFT
 
 
 @dataclass(frozen=True)
@@ -44,12 +45,21 @@ class VAEConfig:
     epochs: int = 2
     autoencoder_lr: float = 0.00001
     autoencoder_acc_steps: int = 16
+    ndiscriminators: int = 4
+    nfilters: int = 1024
+    naudio_disc_layers: int = 4
+    audio_disc_downsampling_factor: int = 4
+    nspec_disc_patches: int = 4
     save_steps: int = 512
     vqvae_autoencoder_ckpt_name: str = 'vqvae_autoencoder_ckpt.pth'
     run_name: str = "vqvae-training"
     disc_loss: str = "bce"
     turn_off_checking_steps: int = 128
     val_steps: int = 512
+
+    @property
+    def audio_length(self) -> int:
+        return STFT(self.nfft, self.ntimeframes).l
 
     @staticmethod
     def load(file_path: str = "./resources/config/vae.yaml") -> 'VAEConfig':

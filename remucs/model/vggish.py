@@ -17,7 +17,10 @@ class Vggish:
             x = audio.resample(self.input_sr).data
         else:
             y, sr = audio
-            x = F.resample(y, sr, self.input_sr)
+            if sr != self.input_sr:
+                x = F.resample(y, sr, self.input_sr)
+            else:
+                x = y
         assert len(x.shape) in (2, 3), f"Expected 2D or 3D tensor, got {x.shape}"
         has_batch = len(x.shape) == 3
         if has_batch:
