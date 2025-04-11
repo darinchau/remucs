@@ -6,7 +6,7 @@ num_workers_ds : 0 # Number of workers for loading the dataset
 dataset_dir: "D:/audio-dataset-v3" # Directory containing the dataset
 output_dir: "D:/output" # Directory to save the trained models and checkpoints
 val_count: 100 # Number of validation samples
-sample_rate: 48000 # Sample rate of the audio
+sample_rate: 44100 # Sample rate of the audio
 ntimeframes: 768
 nfft: 1025 # FFT size for spectrogram
 
@@ -26,22 +26,18 @@ gradient_checkpointing : True # Whether to use gradient checkpointing
 
 seed : 1943 # Random seed
 num_workers_dl: 0 # Number of workers for data loading
-autoencoder_batch_size: 1 # Batch size for autoencoder training
-disc_start: 3 # Start training discriminator after this many steps. Set to a very small number for testing
-disc_weight: 0.5 # Weight for the discriminator loss
-disc_hidden: 128 # Number of hidden units in the discriminator
-kl_weight: 0.5 # Weight for the KL divergence loss
+batch_size: 1 # Batch size for autoencoder training
+disc_start: 4096     # Start training discriminator after this many steps. Set to a very small number for testing
+disc_weight: 0.5      # Weight of discriminator loss
+codebook_weight: 1    # Weight of codebook loss
+commitment_beta: 0.2
 perceptual_weight: 1 # Weight for the perceptual loss
-wasserstein_regularizer: 0.1 # Regularizer for the Wasserstein loss. The lambda term in the paper
-gen_weight: 1 # Weight for the generator loss
-spec_weight: 1 # Weight for the spectrogram loss
 epochs: 2 # Number of training epochs
 autoencoder_lr: 0.00001 # Learning rate for the autoencoder
 autoencoder_acc_steps: 16 # Number of accumulation steps for the autoencoder
 save_steps: 512 # Number of steps between saving images
 vqvae_autoencoder_ckpt_name: 'vqvae_autoencoder_ckpt.pth' # Checkpoint name for the VQ-VAE autoencoder
 run_name: "vqvae-training" # Name of the training run
-disc_loss: "wgan" # Type of discriminator loss: "bce", "mse", or "wgan"
-recon_loss: "both" # Type of reconstruction loss: "spec", "l2", or "both". "both" is the sum of the two, "l2" is the L2 loss on audio, and "spec" is the l2 loss on the spectrogram
+disc_loss: "wgan" # Type of discriminator loss: "bce", "mse"
 turn_off_checking_steps: 128 # Number of steps after which we turn off all the sanity checks to hopefully speed up training
 val_steps: 512 # Number of steps between validations

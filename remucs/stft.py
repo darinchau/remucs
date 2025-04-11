@@ -67,7 +67,7 @@ class STFT:
         self._assert_is_spectrogram(z, bs=x.shape[0])
         return z
 
-    def inverse(self, z: torch.Tensor):
+    def inverse(self, z: torch.Tensor) -> torch.Tensor:
         self._assert_is_spectrogram(z)
 
         # We expect no trimming or padding to be done, so length=None
@@ -84,7 +84,7 @@ class STFT:
         self._assert_is_audio(x, bs=z.shape[0])
         return x
 
-    def mel(self, x: torch.Tensor, sample_rate: int, nmels: int = 80):
+    def mel(self, x: torch.Tensor, sample_rate: int, nmels: int = 80) -> torch.Tensor:
         self._assert_is_audio(x)
 
         # Compute the mel filterbank

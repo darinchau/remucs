@@ -460,6 +460,6 @@ class RVQVAE(nn.Module):
         return VAEOutput(
             output=out,
             z=z,
-            codebook_loss=quant_losses["codebook_loss"],
-            commitment_loss=quant_losses["commitment_loss"]
+            codebook_loss=quant_losses["codebook_loss"],  # type: ignore
+            commitment_loss=quant_losses["commitment_loss"]  # type: ignore
         )
