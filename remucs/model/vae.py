@@ -188,7 +188,7 @@ class UpBlock(nn.Module):
     3. Attention Block
     """
 
-    def __init__(self, in_channels, out_channels, up_sample, num_heads, num_layers, attn, norm_channels, use_gradient_checkpointing=False):
+    def __init__(self, in_channels, out_channels, up_sample, num_heads, num_layers, attn, norm_channels, use_gradient_checkpointing=False, final=True):
         super().__init__()
         self.num_layers = num_layers
         self.up_sample = up_sample
@@ -239,12 +239,21 @@ class UpBlock(nn.Module):
             ]
         )
 
-        self.up_sample_conv = nn.ConvTranspose2d(in_channels, in_channels, 4, 2, 1) \
-            if self.up_sample else nn.Identity()
+        # Add one to the final conv transpose to make it 2n + 1
+        if not self.up_sample:
+            self.up_sample_conv = nn.Identity()
+        elif final:
+            self.up_sample_conv = nn.ConvTranspose2d(in_channels, in_channels, kernel_size=(3, 2), stride=2, padding=0, output_padding=(1, 0))
+        else:
+            self.up_sample_conv = nn.ConvTranspose2d(in_channels, in_channels, 4, 2, 1)
+        self.final = final
 
     def forward(self, x):
         # Upsample
+        # x: (B, C, N, T)
         x = self.up_sample_conv(x)
+        if self.final:
+            x = x[:, :, :-1, :]
 
         out = x
         for i in range(self.num_layers):
@@ -408,7 +417,8 @@ class RVQVAE(nn.Module):
                 num_layers=self.config.num_up_layers,
                 attn=self.config.attn_down[i-1],
                 norm_channels=self.config.norm_channels,
-                use_gradient_checkpointing=self.config.gradient_checkpointing
+                use_gradient_checkpointing=self.config.gradient_checkpointing,
+                final=i == 1
             ))
 
         self.decoder_norm_out = nn.GroupNorm(self.config.norm_channels, self.config.down_channels[0])

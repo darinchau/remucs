@@ -4,15 +4,17 @@ import torchaudio
 from torchaudio.prototype.pipelines import VGGISH
 from AutoMasher.fyp import Audio
 import torchaudio.functional as F
+from torch import nn
 
 
-class Vggish:
+class Vggish(nn.Module):
     def __init__(self):
+        super().__init__()
         self.input_sr = VGGISH.sample_rate
         self.input_proc = VGGISH.get_input_processor()
         self.model = VGGISH.get_model()
 
-    def __call__(self, audio: Audio | tuple[torch.Tensor, int]):
+    def forward(self, audio: Audio | tuple[torch.Tensor, int]):
         if isinstance(audio, Audio):
             x = audio.resample(self.input_sr).data
         else:
@@ -35,6 +37,5 @@ class Vggish:
             feats = feats.view(b, c, -1)
         return feats
 
-    def to(self, *args, **kwargs):
-        self.model.to(*args, **kwargs)
-        return self
+    def __call__(self, audio: Audio | tuple[torch.Tensor, int]) -> torch.Tensor:
+        return super().__call__(audio)

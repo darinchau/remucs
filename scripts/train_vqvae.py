@@ -161,21 +161,17 @@ class DiscriminatorLoss(nn.Module):
 
 def load_lpips(config: VAEConfig):
     class _PerceptualLossWrapper(nn.Module):
-        def __init__(self, stride: int):
+        def __init__(self, in_sr: int):
             super().__init__()
             self.lpips = Vggish()
-            self.stride = stride
+            self.in_sr = in_sr
 
         def forward(self, pred_audio, targ_audio):
-            pred_audio = pred_audio.unflatten(-1, (-1, self.stride)).mean(dim=-1)
-            targ_audio = targ_audio.unflatten(-1, (-1, self.stride)).mean(dim=-1)
-            pred = self.lpips((pred_audio, 16000))
-            targ = self.lpips((targ_audio, 16000))
+            pred = self.lpips((pred_audio, self.in_sr))
+            targ = self.lpips((targ_audio, self.in_sr))
             return F.mse_loss(pred, targ)
 
-    # Very arbitrary assumption - can try to use resample???
-    assert config.sample_rate % 16000 == 0, f"Sample rate must be an integer multiple of the VGGish sample rate (16000)"
-    model = _PerceptualLossWrapper(config.sample_rate // 16000)
+    model = _PerceptualLossWrapper(config.sample_rate)
     model = model.eval().to(device)
 
     for p in model.parameters():
@@ -300,12 +296,16 @@ def train(config_path: str, start_from_iter: int = 0):
         config=config.asdict()
     )
 
-    for epoch_idx in range(config.epochs):
+    while True:
         optimizer_g.zero_grad()
         optimizer_d.zero_grad()
+        stop_training: bool = False
 
         for target_audio in tqdm(data_loader):
             step_count += 1
+            if step_count > config.steps:
+                stop_training = True
+                break
 
             assert isinstance(target_audio, torch.Tensor)
             assert target_audio.dim() == 3  # im shape: B, nsources/2=4, L
@@ -356,7 +356,7 @@ def train(config_path: str, start_from_iter: int = 0):
             disc_losses = []
             if step_count > config.disc_start:
                 with autocast('cuda'):
-                    dgz = discriminator(pred_audio, pred_spec)
+                    dgz = discriminator(pred_audio.detach(), pred_spec.detach())
                     dx = discriminator(target_audio, target_spec)
                 disc_fake_loss = disc_loss(dgz, dx)
                 disc_losses.append(disc_fake_loss.item())
@@ -399,6 +399,7 @@ def train(config_path: str, start_from_iter: int = 0):
                         if val_count_ > config.val_count:
                             break
 
+                        ###  Copy pasted from training loop ###
                         batch_size = target_audio.shape[0]
                         target_audio = target_audio.float().to(device)
                         target_spec = stft.forward(
@@ -407,13 +408,16 @@ def train(config_path: str, start_from_iter: int = 0):
                         target_spec = torch.view_as_real(target_spec).permute(0, 3, 1, 2)  # B*4, 2, N, T
                         target_spec = target_spec.unflatten(0, (batch_size, 4)).flatten(1, 2).float().to(device)  # B, 4*2, N, T
 
+                        # Fetch autoencoders output(reconstructions)
                         with autocast('cuda'):
                             model_output: VAEOutput = model(target_spec)
 
                         pred_spec = model_output.output
                         pred_audio = stft.inverse(
-                            torch.view_as_complex(pred_spec.float().unflatten(1, (4, 2)).flatten(0, 1).permute(0, 2, 3, 1)).contiguous()
+                            torch.view_as_complex(pred_spec.float().unflatten(1, (4, 2)).flatten(0, 1).permute(0, 2, 3, 1).contiguous())
                         ).unflatten(0, (batch_size, 4))
+
+                        #######################################
 
                         with autocast('cuda'):
                             recon_loss = reconstruction_loss(pred_audio, target_audio) + reconstruction_loss(pred_spec, target_spec)
@@ -445,6 +449,9 @@ def train(config_path: str, start_from_iter: int = 0):
         disc_save_path = config.get_disc_save_path(step_count)
         torch.save(model.state_dict(), model_save_path)
         torch.save(discriminator.state_dict(), disc_save_path)
+
+        if stop_training:
+            break
 
     wandb.finish()
     print('Done Training...')

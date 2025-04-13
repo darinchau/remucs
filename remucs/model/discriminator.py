@@ -70,12 +70,12 @@ class NLayerDiscriminator(nn.Module):
 
 
 class AudioDiscriminator(nn.Module):
-    def __init__(self, nsources: int, ndiscriminators: int, nfilters: int, n_layers: int, downsampling_factor: int):
+    def __init__(self, naudios: int, ndiscriminators: int, nfilters: int, n_layers: int, downsampling_factor: int):
         super().__init__()
         self.model = nn.ModuleDict()
         for i in range(ndiscriminators):
             self.model[f"disc_{i}"] = NLayerDiscriminator(
-                nsources, nfilters, n_layers, downsampling_factor
+                naudios, nfilters, n_layers, downsampling_factor
             )
 
         self.downsample = nn.AvgPool1d(4, stride=2, padding=1, count_include_pad=False)
@@ -153,7 +153,7 @@ class Discriminator(nn.Module):
     def __init__(self, config: VAEConfig):
         super().__init__()
         self.audio_discriminator = AudioDiscriminator(
-            config.nsources, config.ndiscriminators, config.nfilters, config.naudio_disc_layers, config.audio_disc_downsampling_factor
+            config.nsources // 2, config.ndiscriminators, config.nfilters, config.naudio_disc_layers, config.audio_disc_downsampling_factor
         )
         self.spectrogram_discriminator = SpectrogramPatchModel(
             config.nsources, config.nfft, config.ntimeframes, config.nspec_disc_patches

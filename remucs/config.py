@@ -40,7 +40,7 @@ class VAEConfig:
     codebook_weight: float = 1
     commitment_beta: float = 0.2
     perceptual_weight: int = 1
-    epochs: int = 2
+    steps: int = 100000
     autoencoder_lr: float = 0.00001
     autoencoder_acc_steps: int = 16
     ndiscriminators: int = 4
@@ -52,7 +52,6 @@ class VAEConfig:
     vqvae_autoencoder_ckpt_name: str = 'vqvae_autoencoder_ckpt.pth'
     run_name: str = "vqvae-training"
     disc_loss: str = "bce"
-    turn_off_checking_steps: int = 128
     val_steps: int = 512
 
     @property
@@ -86,10 +85,14 @@ class VAEConfig:
         assert self.ndiscriminators == len(self.disc_audio_weights)
 
     def get_vae_save_path(self, step: int) -> str:
-        return os.path.join(self.output_dir, self.run_name, f"step-{step:06d}", self.vqvae_autoencoder_ckpt_name + ".pth")
+        path = os.path.join(self.output_dir, self.run_name, f"step-{step:06d}", self.vqvae_autoencoder_ckpt_name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        return path
 
     def get_disc_save_path(self, step: int) -> str:
-        return os.path.join(self.output_dir, self.run_name, f"step-{step:06d}", "disc_ckpt.pth")
+        path = os.path.join(self.output_dir, self.run_name, f"step-{step:06d}", "disc_ckpt")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        return path
 
     def asdict(self) -> dict:
         d = asdict(self)
