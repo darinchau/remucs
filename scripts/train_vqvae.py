@@ -22,7 +22,7 @@ from accelerate import Accelerator
 from math import isclose
 from remucs.model.vae import RVQVAE as VAE, VAEOutput
 from remucs.model.vggish import Vggish
-from remucs.model.discriminator import Discriminator
+from remucs.model.discriminator import Discriminator, DiscriminatorOutput
 from remucs.config import VAEConfig
 from AutoMasher.fyp import SongDataset, YouTubeURL, Audio
 from AutoMasher.fyp.audio import DemucsCollection
@@ -69,6 +69,94 @@ class VQVAEDataset(torch.utils.data.Dataset):
         ).data.squeeze(1)  # Shape: (nsource=4, L)
 
         return parts
+
+
+class DiscriminatorLoss(nn.Module):
+    def __init__(self, config: VAEConfig):
+        super().__init__()
+        self.config = config
+
+    def forward(self, dgz: DiscriminatorOutput, dx: DiscriminatorOutput | None = None):
+        generator = dx is None
+        if self.config.disc_loss == "bce":
+            if generator:
+                loss = self.config.disc_spec_weight * F.binary_cross_entropy_with_logits(
+                    dgz.spectrogram_results, torch.ones_like(dgz.spectrogram_results)
+                )
+                for i in range(self.config.ndiscriminators):
+                    loss += self.config.disc_audio_weights[i] * F.binary_cross_entropy_with_logits(
+                        dgz.audio_results[i], torch.ones_like(dgz.audio_results[i])
+                    )
+            else:
+                fake_loss = self.config.disc_spec_weight * F.binary_cross_entropy_with_logits(
+                    dgz.spectrogram_results, torch.zeros_like(dgz.spectrogram_results)
+                )
+                real_loss = self.config.disc_spec_weight * F.binary_cross_entropy_with_logits(
+                    dx.spectrogram_results, torch.ones_like(dx.spectrogram_results)
+                )
+                for i in range(self.config.ndiscriminators):
+                    fake_loss += self.config.disc_audio_weights[i] * F.binary_cross_entropy_with_logits(
+                        dgz.audio_results[i], torch.zeros_like(dgz.audio_results[i])
+                    )
+                    real_loss += self.config.disc_audio_weights[i] * F.binary_cross_entropy_with_logits(
+                        dx.audio_results[i], torch.ones_like(dx.audio_results[i])
+                    )
+                loss = (fake_loss + real_loss) / 2.0
+            return loss
+
+        if self.config.disc_loss == "mse":
+            if generator:
+                loss = self.config.disc_spec_weight * F.mse_loss(
+                    dgz.spectrogram_results, torch.ones_like(dgz.spectrogram_results)
+                )
+                for i in range(self.config.ndiscriminators):
+                    loss += self.config.disc_audio_weights[i] * F.mse_loss(
+                        dgz.audio_results[i], torch.ones_like(dgz.audio_results[i])
+                    )
+            else:
+                fake_loss = self.config.disc_spec_weight * F.mse_loss(
+                    dgz.spectrogram_results, torch.zeros_like(dgz.spectrogram_results)
+                )
+                real_loss = self.config.disc_spec_weight * F.mse_loss(
+                    dx.spectrogram_results, torch.ones_like(dx.spectrogram_results)
+                )
+                for i in range(self.config.ndiscriminators):
+                    fake_loss += self.config.disc_audio_weights[i] * F.mse_loss(
+                        dgz.audio_results[i], torch.zeros_like(dgz.audio_results[i])
+                    )
+                    real_loss += self.config.disc_audio_weights[i] * F.mse_loss(
+                        dx.audio_results[i], torch.ones_like(dx.audio_results[i])
+                    )
+                loss = (fake_loss + real_loss) / 2.0
+            return loss
+
+        if self.config.disc_loss == "hinge":
+            if generator:
+                loss = self.config.disc_spec_weight * torch.mean(
+                    F.relu(1.0 - dgz.spectrogram_results)
+                )
+                for i in range(self.config.ndiscriminators):
+                    loss += self.config.disc_audio_weights[i] * torch.mean(
+                        F.relu(1.0 - dgz.audio_results[i])
+                    )
+            else:
+                fake_loss = self.config.disc_spec_weight * torch.mean(
+                    F.relu(1.0 + dgz.spectrogram_results)
+                )
+                real_loss = self.config.disc_spec_weight * torch.mean(
+                    F.relu(1.0 - dx.spectrogram_results)
+                )
+                for i in range(self.config.ndiscriminators):
+                    fake_loss += self.config.disc_audio_weights[i] * torch.mean(
+                        F.relu(1.0 + dgz.audio_results[i])
+                    )
+                    real_loss += self.config.disc_audio_weights[i] * torch.mean(
+                        F.relu(1.0 - dx.audio_results[i])
+                    )
+                loss = (fake_loss + real_loss) / 2.0
+            return loss
+
+        raise ValueError(f"Unsupported discriminator loss type: {self.config.disc_loss}")
 
 
 def load_lpips(config: VAEConfig):
@@ -176,7 +264,7 @@ def train(config_path: str, start_from_iter: int = 0):
     os.makedirs(config.output_dir, exist_ok=True)
 
     reconstruction_loss = torch.nn.MSELoss()
-    disc_loss = torch.nn.BCEWithLogitsLoss() if config.disc_loss == 'bce' else torch.nn.MSELoss()
+    disc_loss = DiscriminatorLoss(config)
     perceptual_loss = load_lpips(config)
 
     discriminator = Discriminator(config).to(device)
@@ -242,22 +330,21 @@ def train(config_path: str, start_from_iter: int = 0):
             with autocast('cuda'):
                 recon_loss = reconstruction_loss(pred_audio, target_audio) + reconstruction_loss(pred_spec, target_spec)
 
-            recon_loss = recon_loss / config.autoencoder_acc_steps
-            g_loss: torch.Tensor = (recon_loss +
-                                    (config.codebook_weight * model_output.codebook_loss / config.autoencoder_acc_steps) +
-                                    (config.commitment_beta * model_output.commitment_loss / config.autoencoder_acc_steps))
+            g_loss: torch.Tensor = recon_loss + \
+                config.codebook_weight * model_output.codebook_loss + \
+                config.commitment_beta * model_output.commitment_loss
 
             # Adversarial loss only if disc_step_start steps passed
             if step_count > config.disc_start:
-                disc_fake_preds: list[Tensor] = discriminator(pred_audio, pred_spec)
-                disc_fake_loss = sum(
-                    disc_loss(x, torch.zeros_like(x)) for x in disc_fake_preds
-                )
-                g_loss += config.disc_weight * disc_fake_loss / config.autoencoder_acc_steps
+                with autocast('cuda'):
+                    dgz = discriminator(pred_audio, pred_spec)
+                    disc_fake_loss = disc_loss(dgz)
+                g_loss += disc_fake_loss
 
             # Perceptual Loss
             lpips_loss = torch.mean(perceptual_loss(pred_audio, target_audio))
-            g_loss += config.perceptual_weight * lpips_loss / config.autoencoder_acc_steps
+            g_loss += config.perceptual_weight * lpips_loss
+            g_loss /= config.autoencoder_acc_steps
 
             accelerator.backward(g_loss)
             #####################################
@@ -265,14 +352,13 @@ def train(config_path: str, start_from_iter: int = 0):
             ######### Optimize Discriminator #######
             disc_losses = []
             if step_count > config.disc_start:
-                disc_fake_pred: Tensor = discriminator(pred_audio, pred_spec)
-                disc_real_pred: Tensor = discriminator(target_audio, target_spec)
-                disc_fake_loss = disc_loss(disc_fake_pred, torch.zeros_like(disc_fake_pred))
-                disc_real_loss = disc_loss(disc_real_pred, torch.ones_like(disc_real_pred))
-                disc_loss = config.disc_weight * (disc_fake_loss + disc_real_loss) / 2
-                disc_losses.append(disc_loss.item())
-                disc_loss = disc_loss / config.autoencoder_acc_steps
-                accelerator.backward(disc_loss)
+                with autocast('cuda'):
+                    dgz = discriminator(pred_audio, pred_spec)
+                    dx = discriminator(target_audio, target_spec)
+                disc_fake_loss = disc_loss(dgz, dx)
+                disc_losses.append(disc_fake_loss.item())
+                disc_fake_loss /= config.autoencoder_acc_steps
+                accelerator.backward(disc_fake_loss)
                 if step_count % config.autoencoder_acc_steps == 0:
                     optimizer_d.step()
                     optimizer_d.zero_grad()
@@ -364,7 +450,6 @@ def train(config_path: str, start_from_iter: int = 0):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Arguments for vq vae training')
     parser.add_argument('--config', dest='config_path', default='resources/config/vqvae.yaml', type=str)
-    parser.add_argument('--output_dir', dest='output_dir', type=str, default='resources/models/vqvae')
     parser.add_argument('--start_iter', dest='start_iter', type=int, default=0)
     args = parser.parse_args()
     train(args.config_path, start_from_iter=args.start_iter)

@@ -4,6 +4,7 @@ import torch
 from torch.nn.utils import weight_norm
 import numpy as np
 from ..config import VAEConfig
+from dataclasses import dataclass
 
 
 def WNConv1d(*args, **kwargs):
@@ -142,6 +143,12 @@ class SpectrogramPatchModel(nn.Module):
         return x
 
 
+@dataclass
+class DiscriminatorOutput:
+    audio_results: list[torch.Tensor]
+    spectrogram_results: torch.Tensor
+
+
 class Discriminator(nn.Module):
     def __init__(self, config: VAEConfig):
         super().__init__()
@@ -151,15 +158,20 @@ class Discriminator(nn.Module):
         self.spectrogram_discriminator = SpectrogramPatchModel(
             config.nsources, config.nfft, config.ntimeframes, config.nspec_disc_patches
         )
+        self.config = config
 
-    def forward(self, audio: torch.Tensor, spectrogram: torch.Tensor):
+    def forward(self, audio: torch.Tensor, spectrogram: torch.Tensor) -> DiscriminatorOutput:
         # Pass audio through the audio discriminator
         audio_results = self.audio_discriminator(audio)
 
         # Pass spectrogram through the spectrogram discriminator
         spectrogram_results = self.spectrogram_discriminator(spectrogram)
 
-        return {
-            "audio_results": audio_results,
-            "spectrogram_results": spectrogram_results,
-        }
+        return DiscriminatorOutput(
+            audio_results=audio_results,
+            spectrogram_results=spectrogram_results,
+        )
+
+    def __call__(self, audio: torch.Tensor, spectrogram: torch.Tensor) -> DiscriminatorOutput:
+        # Exists purely for type annotation
+        return super().__call__(audio, spectrogram)

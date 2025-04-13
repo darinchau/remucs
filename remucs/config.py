@@ -19,7 +19,7 @@ class VAEConfig:
 
     z_channels: int = 4
     codebook_size: int = 1024
-    nquantizers = 4
+    nquantizers: int = 4
     down_channels: tuple[int, ...] = (32, 64, 128, 128)
     mid_channels: tuple[int, ...] = (128, 128)
     down_sample: tuple[int, ...] = (2, 2, 4)
@@ -31,16 +31,14 @@ class VAEConfig:
     num_up_layers: int = 2
     gradient_checkpointing: bool = True
 
-    kl_mean: bool = True
     seed: int = 1943
     num_workers_dl: int = 0
     batch_size: int = 1
     disc_start: int = 3
-    disc_weight: float = 0.5
-    disc_hidden: int = 128
+    disc_spec_weight: float = 0.5
+    disc_audio_weights: tuple[float, ...] = (1.0, 1.0, 1.0, 1.0)
     codebook_weight: float = 1
     commitment_beta: float = 0.2
-    reconstruction_weight: float = 1.0
     perceptual_weight: int = 1
     epochs: int = 2
     autoencoder_lr: float = 0.00001
@@ -83,7 +81,9 @@ class VAEConfig:
         return VAEConfig(**merged_config)
 
     def __post_init__(self):
-        assert self.disc_loss in ("bce", "mse")
+        assert self.disc_loss in ("bce", "mse", "hinge")
+        assert self.nspec_disc_patches > 0
+        assert self.ndiscriminators == len(self.disc_audio_weights)
 
     def get_vae_save_path(self, step: int) -> str:
         return os.path.join(self.output_dir, self.run_name, f"step-{step:06d}", self.vqvae_autoencoder_ckpt_name + ".pth")

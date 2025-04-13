@@ -3,15 +3,15 @@
 nbars: 4 # Number of bars in the input
 nsources : 8 # Number of sources in the input - because semantics this should be 2 times that
 num_workers_ds : 0 # Number of workers for loading the dataset
-dataset_dir: "D:/audio-dataset-v3" # Directory containing the dataset
-output_dir: "D:/output" # Directory to save the trained models and checkpoints
+dataset_dir: "E:/audio-dataset-v3" # Directory containing the dataset
+output_dir: "E:/output" # Directory to save the trained models and checkpoints
 val_count: 100 # Number of validation samples
 sample_rate: 44100 # Sample rate of the audio
 ntimeframes: 768
 nfft: 1025 # FFT size for spectrogram
 
 z_channels: 4 # Number of channels in the latent space
-codebook_size: 1024 # Size of the codebook for VQ-VAE
+codebook_size: 1024 # Size of each codebook for VQ-VAE
 nquantizers: 4 # Number of quantizers
 down_channels : [32, 64, 128, 128] # Number of channels in each downsampling layer
 mid_channels : [128, 128] # Number of channels in each middle layer
@@ -28,7 +28,8 @@ seed : 1943 # Random seed
 num_workers_dl: 0 # Number of workers for data loading
 batch_size: 1 # Batch size for autoencoder training
 disc_start: 4096     # Start training discriminator after this many steps. Set to a very small number for testing
-disc_weight: 0.5      # Weight of discriminator loss
+disc_spec_weight: 0.5      # Weight of discriminator loss
+disc_audio_weights: [1, 1, 1, 1] # Weights for each audio discriminator
 codebook_weight: 1    # Weight of codebook loss
 commitment_beta: 0.2
 perceptual_weight: 1 # Weight for the perceptual loss
@@ -43,6 +44,6 @@ nspec_disc_patches: 4 # Number of time patches to operate with in the spectrogrm
 save_steps: 512 # Number of steps between saving images
 vqvae_autoencoder_ckpt_name: 'vqvae_autoencoder_ckpt.pth' # Checkpoint name for the VQ-VAE autoencoder
 run_name: "vqvae-training" # Name of the training run
-disc_loss: "wgan" # Type of discriminator loss: "bce", "mse"
+disc_loss: "bce" # Type of discriminator loss: "bce", "mse"
 turn_off_checking_steps: 128 # Number of steps after which we turn off all the sanity checks to hopefully speed up training
 val_steps: 512 # Number of steps between validations
