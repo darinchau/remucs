@@ -24,7 +24,7 @@ from remucs.model.vae import RVQVAE as VAE, VAEOutput
 from remucs.model.vggish import Vggish
 from remucs.model.discriminator import Discriminator, DiscriminatorOutput
 from remucs.config import VAEConfig
-from AutoMasher.fyp import SongDataset, YouTubeURL, Audio
+from AutoMasher.fyp import SongDataset, YouTubeURL, Audio, get_url
 from AutoMasher.fyp.audio import DemucsCollection
 from remucs.stft import STFT
 
@@ -173,6 +173,7 @@ def load_lpips(config: VAEConfig):
             targ = self.lpips((targ_audio, 16000))
             return F.mse_loss(pred, targ)
 
+    # Very arbitrary assumption - can try to use resample???
     assert config.sample_rate % 16000 == 0, f"Sample rate must be an integer multiple of the VGGish sample rate (16000)"
     model = _PerceptualLossWrapper(config.sample_rate // 16000)
     model = model.eval().to(device)
@@ -193,12 +194,14 @@ def set_seed(seed: int):
 
 def maybe_make_split(sd: SongDataset):
     filepath = "project-remucs-data-split.json"
-    sd.register(KEY, filepath)
+    sd.register(KEY, filepath, create=False)
     path = sd.get_path(KEY)
     if os.path.isfile(path):
         with open(path, 'r') as f:
             split = json.load(f)
         assert set(split.keys()) == {"train", "val", "test"}
+        for k, v in split.items():
+            split[k] = [YouTubeURL(url) if isinstance(url, str) else url for url in v]
         return split
 
     print("Creating dataset split...")
@@ -322,7 +325,7 @@ def train(config_path: str, start_from_iter: int = 0):
 
             pred_spec = model_output.output
             pred_audio = stft.inverse(
-                torch.view_as_complex(pred_spec.unflatten(1, (4, 2)).flatten(0, 1).permute(0, 2, 3, 1)).contiguous()
+                torch.view_as_complex(pred_spec.float().unflatten(1, (4, 2)).flatten(0, 1).permute(0, 2, 3, 1).contiguous())
             ).unflatten(0, (batch_size, 4))
 
             ######### Optimize Generator ##########
@@ -409,7 +412,7 @@ def train(config_path: str, start_from_iter: int = 0):
 
                         pred_spec = model_output.output
                         pred_audio = stft.inverse(
-                            torch.view_as_complex(pred_spec.unflatten(1, (4, 2)).flatten(0, 1).permute(0, 2, 3, 1)).contiguous()
+                            torch.view_as_complex(pred_spec.float().unflatten(1, (4, 2)).flatten(0, 1).permute(0, 2, 3, 1)).contiguous()
                         ).unflatten(0, (batch_size, 4))
 
                         with autocast('cuda'):
@@ -449,7 +452,7 @@ def train(config_path: str, start_from_iter: int = 0):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Arguments for vq vae training')
-    parser.add_argument('--config', dest='config_path', default='resources/config/vqvae.yaml', type=str)
+    parser.add_argument('--config', dest='config_path', default='resources/config/vae.yaml', type=str)
     parser.add_argument('--start_iter', dest='start_iter', type=int, default=0)
     args = parser.parse_args()
     train(args.config_path, start_from_iter=args.start_iter)
