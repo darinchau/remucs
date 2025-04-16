@@ -22,7 +22,7 @@ num_heads: 4 # Number of attention heads
 num_down_layers : 2 # Number of downsampling layers
 num_mid_layers : 2 # Number of middle layers
 num_up_layers : 2 # Number of upsampling layers
-gradient_checkpointing : False # Whether to use gradient checkpointing
+gradient_checkpointing : True # Whether to use gradient checkpointing
 
 seed : 1943 # Random seed
 num_workers_dl: 1 # Number of workers for data loading
