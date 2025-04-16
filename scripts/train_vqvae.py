@@ -272,7 +272,9 @@ def train(config_path: str, start_from_iter: int = 0):
     optimizer_g = Adam(model.parameters(), lr=config.autoencoder_lr, betas=(0.5, 0.999))
 
     accelerator = Accelerator(mixed_precision="bf16")
+
     step_count = 0
+    progress_bar = tqdm(total=config.steps + start_from_iter, desc="Training Progress")
 
     # Reload checkpoint
     if start_from_iter > 0:
@@ -283,6 +285,7 @@ def train(config_path: str, start_from_iter: int = 0):
         disc_sd = torch.load(disc_save_path)
         discriminator.load_state_dict(disc_sd)
         step_count = start_from_iter
+        progress_bar.update(start_from_iter)
 
     model, optimizer_g, data_loader, optimizer_d = accelerator.prepare(
         model, optimizer_g, data_loader, optimizer_d
@@ -296,14 +299,17 @@ def train(config_path: str, start_from_iter: int = 0):
         config=config.asdict()
     )
 
+    model.train()
+
     while True:
         optimizer_g.zero_grad()
         optimizer_d.zero_grad()
         stop_training: bool = False
 
-        for target_audio in tqdm(data_loader):
+        for target_audio in data_loader:
             step_count += 1
-            if step_count > config.steps:
+            progress_bar.update(1)
+            if step_count >= config.steps + start_from_iter:
                 stop_training = True
                 break
 
