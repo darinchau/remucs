@@ -28,7 +28,7 @@ seed : 1943 # Random seed
 num_workers_dl: 2 # Number of workers for data loading
 batch_size: 1 # Batch size for autoencoder training
 ds_batch_size: 3 # Batch size for dataset loading
-disc_start: 1024     # Start training discriminator after this many steps. Set to a very small number for testing
+disc_start: 2048     # Start training discriminator after this many steps. Set to a very small number for testing
 disc_spec_weight: 3      # Weight of discriminator loss
 disc_audio_weights: [1, 1, 1, 1] # Weights for each audio discriminator
 codebook_weight: 1    # Weight of codebook loss
@@ -47,3 +47,4 @@ vqvae_autoencoder_ckpt_name: 'vqvae_autoencoder_ckpt.pth' # Checkpoint name for 
 run_name: "vqvae-training" # Name of the training run
 disc_loss: "bce" # Type of discriminator loss: "bce", "mse", "hinge"
 val_steps: 512 # Number of steps between validations
+validate_at_step_1: True # Whether to validate at step 1

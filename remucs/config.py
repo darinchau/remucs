@@ -54,6 +54,7 @@ class VAEConfig:
     run_name: str = "vqvae-training"
     disc_loss: str = "bce"
     val_steps: int = 512
+    validate_at_step_1: bool = True
 
     @property
     def audio_length(self) -> int:

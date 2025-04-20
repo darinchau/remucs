@@ -243,7 +243,7 @@ def validate(
     stft: STFT
 ):
     val_count_ = 0
-    if step_count % config.val_steps != 1:
+    if step_count % config.val_steps != (1 if config.validate_at_step_1 else 0):
         return
 
     model.eval()
@@ -431,11 +431,15 @@ def train(config_path: str, start_from_iter: int = 0):
                 config.commitment_beta * model_output.commitment_loss
 
             # Adversarial loss only if disc_step_start steps passed
+            g_losses_aud = []
+            g_losses_spec = []
             if step_count > config.disc_start:
                 with autocast('cuda'):
                     dgz = discriminator(pred_audio, pred_spec)
                     disc_fake_loss_aud, disc_fake_loss_spec = disc_loss(dgz)
                 g_loss += disc_fake_loss_aud + disc_fake_loss_spec
+                g_losses_aud.append(disc_fake_loss_aud.item())
+                g_losses_spec.append(disc_fake_loss_spec.item())
 
             # Perceptual Loss
             lpips_loss = torch.mean(perceptual_loss(pred_audio, target_audio))
@@ -472,7 +476,9 @@ def train(config_path: str, start_from_iter: int = 0):
                 "Reconstruction Loss": recon_loss.item(),
                 "Perceptual Loss": lpips_loss.item(),
                 "Codebook Loss": model_output.codebook_loss.item(),
-                "Generator Loss": g_loss.item(),
+                "Generator Audio Loss": g_losses_aud[-1] if g_losses_aud else 0.0,
+                "Generator Spectrogram Loss": g_losses_spec[-1] if g_losses_spec else 0.0,
+                "Total Generator Loss": g_loss.item(),
                 "Discriminator Audio Loss": disc_losses_aud[-1] if disc_losses_aud else 0.0,
                 "Discriminator Spectrogram Loss": disc_losses_spec[-1] if disc_losses_spec else 0.0,
             }, step=step_count)
