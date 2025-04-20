@@ -34,6 +34,7 @@ class VAEConfig:
     seed: int = 1943
     num_workers_dl: int = 0
     batch_size: int = 1
+    ds_batch_size: int = 1
     disc_start: int = 3
     disc_spec_weight: float = 0.5
     disc_audio_weights: tuple[float, ...] = (1.0, 1.0, 1.0, 1.0)

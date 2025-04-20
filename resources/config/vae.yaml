@@ -6,8 +6,8 @@ num_workers_ds : 0 # Number of workers for loading the dataset
 dataset_dir: "E:/audio-dataset-v3" # Directory containing the dataset
 output_dir: "E:/output" # Directory to save the trained models and checkpoints
 val_count: 100 # Number of validation samples
-sample_rate: 48000 # Sample rate of the audio
-ntimeframes: 768
+sample_rate: 44100 # Sample rate of the audio
+ntimeframes: 512
 nfft: 1025 # FFT size for spectrogram
 
 z_channels: 4 # Number of channels in the latent space
@@ -25,8 +25,9 @@ num_up_layers : 2 # Number of upsampling layers
 gradient_checkpointing : True # Whether to use gradient checkpointing
 
 seed : 1943 # Random seed
-num_workers_dl: 1 # Number of workers for data loading
+num_workers_dl: 2 # Number of workers for data loading
 batch_size: 1 # Batch size for autoencoder training
+ds_batch_size: 3 # Batch size for dataset loading
 disc_start: 1024     # Start training discriminator after this many steps. Set to a very small number for testing
 disc_spec_weight: 0.5      # Weight of discriminator loss
 disc_audio_weights: [1, 1, 1, 1] # Weights for each audio discriminator
@@ -44,5 +45,5 @@ nspec_disc_patches: 4 # Number of time patches to operate with in the spectrogrm
 save_steps: 2048 # Number of steps between saving images
 vqvae_autoencoder_ckpt_name: 'vqvae_autoencoder_ckpt.pth' # Checkpoint name for the VQ-VAE autoencoder
 run_name: "vqvae-training" # Name of the training run
-disc_loss: "bce" # Type of discriminator loss: "bce", "mse"
+disc_loss: "hinge" # Type of discriminator loss: "bce", "mse", "hinge"
 val_steps: 512 # Number of steps between validations

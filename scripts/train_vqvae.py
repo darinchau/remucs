@@ -61,14 +61,17 @@ class VQVAEDataset(torch.utils.data.Dataset):
         if parts.nframes < self.slice_length:
             return self.__getitem__(random.randint(0, len(self.urls) - 1))
 
-        start = random.randint(0, max(0, parts.nframes - self.slice_length))
-        end = start + self.slice_length
+        datas = []
+        for i in range(self.config.ds_batch_size):
+            start = random.randint(0, max(0, parts.nframes - self.slice_length))
+            end = start + self.slice_length
 
-        parts = parts.map(
-            lambda x: x.slice_frames(start, end).to_nchannels(1)
-        ).data.squeeze(1)  # Shape: (nsource=4, L)
+            p = parts.map(
+                lambda x: x.slice_frames(start, end).to_nchannels(1)
+            ).data.squeeze(1)  # Shape: (nsource=4, L)
+            datas.append(p)
 
-        return parts
+        return torch.stack(datas, dim=0)  # Shape: (ds, nsource=4, L)
 
 
 class DiscriminatorLoss(nn.Module):
@@ -221,6 +224,73 @@ def maybe_make_split(sd: SongDataset):
     return split
 
 
+def validate(
+    config: VAEConfig,
+    model: VAE,
+    val_data_loader: DataLoader,
+    reconstruction_loss: nn.Module,
+    perceptual_loss: nn.Module,
+    step_count: int,
+    stft: STFT
+):
+    val_count_ = 0
+    if step_count % config.val_steps != 1:
+        return
+
+    model.eval()
+    with torch.no_grad():
+        val_recon_losses = []
+        val_perceptual_losses = []
+        val_codebook_losses = []
+        for target_audio in tqdm(val_data_loader, f"Performing validation (step={step_count})", total=min(config.val_count, len(val_data_loader))):
+            val_count_ += 1
+            if val_count_ > config.val_count:
+                break
+
+            ###  Copy pasted from training loop ###
+            print(target_audio.shape)
+            batch_size = target_audio.shape[0]
+            target_audio = target_audio.flatten(0, 1)  # im shape: B, 4, L
+            target_audio = target_audio.float().to(device)
+            target_spec = stft.forward(
+                target_audio.float().flatten(0, 1)  # B*4, L
+            )
+            target_spec = torch.view_as_real(target_spec).permute(0, 3, 1, 2)  # B*4, 2, N, T
+            target_spec = target_spec.unflatten(0, (batch_size, 4)).flatten(1, 2).float().to(device)  # B, 4*2, N, T
+
+            # Fetch autoencoders output(reconstructions)
+            with autocast('cuda'):
+                model_output: VAEOutput = model(target_spec)
+
+            pred_spec = model_output.output
+            pred_audio = stft.inverse(
+                torch.view_as_complex(pred_spec.float().unflatten(1, (4, 2)).flatten(0, 1).permute(0, 2, 3, 1).contiguous())
+            ).unflatten(0, (batch_size, 4))
+
+            #######################################
+
+            with autocast('cuda'):
+                recon_loss = reconstruction_loss(pred_audio, target_audio) + reconstruction_loss(pred_spec, target_spec)
+
+            val_recon_loss = recon_loss.item()
+            val_recon_losses.append(val_recon_loss)
+
+            val_lpips_loss = torch.mean(perceptual_loss(pred_audio, target_audio)).item()
+            val_perceptual_losses.append(val_lpips_loss)
+
+            val_codebook_loss = model_output.codebook_loss.item()
+            val_codebook_losses.append(val_codebook_loss)
+
+    wandb.log({
+        "Val Reconstruction Loss": np.mean(val_recon_losses),
+        "Val Perceptual Loss": np.mean(val_perceptual_losses),
+        "Val Codebook Loss": np.mean(val_codebook_losses)
+    }, step=step_count)
+
+    tqdm.write(f"Validation complete: Reconstruction loss: {np.mean(val_recon_losses)}, Perceptual Loss: {np.mean(val_perceptual_losses)}, Codebook loss: {np.mean(val_codebook_losses)}")
+    model.train()
+
+
 def train(config_path: str, start_from_iter: int = 0):
     """Retrains the discriminator. If discriminator is None, a new discriminator is created based on the PatchGAN architecture."""
 
@@ -245,6 +315,8 @@ def train(config_path: str, start_from_iter: int = 0):
     val_dataset = VQVAEDataset(config, split['val'])
 
     print('Dataset size: {}'.format(len(im_dataset)))
+
+    print(f"Effective audio length: {config.audio_length / config.sample_rate} seconds")
 
     data_loader = DataLoader(
         im_dataset,
@@ -312,6 +384,10 @@ def train(config_path: str, start_from_iter: int = 0):
             if step_count >= config.steps + start_from_iter:
                 stop_training = True
                 break
+
+            print(target_audio.shape)
+
+            target_audio = target_audio.flatten(0, 1)  # im shape: B, 4, L
 
             assert isinstance(target_audio, torch.Tensor)
             assert target_audio.dim() == 3  # im shape: B, nsources/2=4, L
@@ -393,58 +469,7 @@ def train(config_path: str, start_from_iter: int = 0):
                 torch.save(discriminator.state_dict(), disc_save_path)
 
             ########### Perform Validation #############
-            val_count_ = 0
-            if step_count % config.val_steps == 0:
-                model.eval()
-                with torch.no_grad():
-                    val_recon_losses = []
-                    val_perceptual_losses = []
-                    val_codebook_losses = []
-                    for val_im in tqdm(val_data_loader, f"Performing validation (step={step_count})", total=min(config.val_count, len(val_data_loader))):
-                        val_count_ += 1
-                        if val_count_ > config.val_count:
-                            break
-
-                        ###  Copy pasted from training loop ###
-                        batch_size = target_audio.shape[0]
-                        target_audio = target_audio.float().to(device)
-                        target_spec = stft.forward(
-                            target_audio.float().flatten(0, 1)  # B*4, L
-                        )
-                        target_spec = torch.view_as_real(target_spec).permute(0, 3, 1, 2)  # B*4, 2, N, T
-                        target_spec = target_spec.unflatten(0, (batch_size, 4)).flatten(1, 2).float().to(device)  # B, 4*2, N, T
-
-                        # Fetch autoencoders output(reconstructions)
-                        with autocast('cuda'):
-                            model_output: VAEOutput = model(target_spec)
-
-                        pred_spec = model_output.output
-                        pred_audio = stft.inverse(
-                            torch.view_as_complex(pred_spec.float().unflatten(1, (4, 2)).flatten(0, 1).permute(0, 2, 3, 1).contiguous())
-                        ).unflatten(0, (batch_size, 4))
-
-                        #######################################
-
-                        with autocast('cuda'):
-                            recon_loss = reconstruction_loss(pred_audio, target_audio) + reconstruction_loss(pred_spec, target_spec)
-
-                        val_recon_loss = recon_loss.item()
-                        val_recon_losses.append(val_recon_loss)
-
-                        val_lpips_loss = torch.mean(perceptual_loss(pred_audio, target_audio)).item()
-                        val_perceptual_losses.append(val_lpips_loss)
-
-                        val_codebook_loss = model_output.codebook_loss.item()
-                        val_codebook_losses.append(val_codebook_loss)
-
-                wandb.log({
-                    "Val Reconstruction Loss": np.mean(val_recon_losses),
-                    "Val Perceptual Loss": np.mean(val_perceptual_losses),
-                    "Val Codebook Loss": np.mean(val_codebook_losses)
-                }, step=step_count)
-
-                tqdm.write(f"Validation complete: Reconstruction loss: {np.mean(val_recon_losses)}, Perceptual Loss: {np.mean(val_perceptual_losses)}, Codebook loss: {np.mean(val_codebook_losses)}")
-                model.train()
+            validate(config, model, val_data_loader, reconstruction_loss, perceptual_loss, step_count, stft)
 
         # End of epoch. Clean up the gradients and losses and save the model
         optimizer_d.step()
