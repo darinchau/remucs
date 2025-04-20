@@ -79,86 +79,95 @@ class DiscriminatorLoss(nn.Module):
         super().__init__()
         self.config = config
 
-    def forward(self, dgz: DiscriminatorOutput, dx: DiscriminatorOutput | None = None):
+    def compute_bce_loss(self, dgz: DiscriminatorOutput, dx: DiscriminatorOutput | None = None):
         generator = dx is None
+        if generator:
+            loss = self.config.disc_spec_weight * F.binary_cross_entropy_with_logits(
+                dgz.spectrogram_results, torch.ones_like(dgz.spectrogram_results)
+            )
+            loss_audio = torch.zeros_like(loss)
+            for i in range(self.config.ndiscriminators):
+                loss_audio += self.config.disc_audio_weights[i] * F.binary_cross_entropy_with_logits(
+                    dgz.audio_results[i], torch.ones_like(dgz.audio_results[i])
+                )
+        else:
+            fake_loss = self.config.disc_spec_weight * F.binary_cross_entropy_with_logits(
+                dgz.spectrogram_results, torch.zeros_like(dgz.spectrogram_results)
+            )
+            real_loss = self.config.disc_spec_weight * F.binary_cross_entropy_with_logits(
+                dx.spectrogram_results, torch.ones_like(dx.spectrogram_results)
+            )
+            fake_loss_audio = torch.zeros_like(fake_loss)
+            real_loss_audio = torch.zeros_like(real_loss)
+            for i in range(self.config.ndiscriminators):
+                fake_loss_audio += self.config.disc_audio_weights[i] * F.binary_cross_entropy_with_logits(
+                    dgz.audio_results[i], torch.zeros_like(dgz.audio_results[i])
+                )
+                real_loss_audio += self.config.disc_audio_weights[i] * F.binary_cross_entropy_with_logits(
+                    dx.audio_results[i], torch.ones_like(dx.audio_results[i])
+                )
+            loss = (fake_loss + real_loss) / 2.0
+            loss_audio = (fake_loss_audio + real_loss_audio) / 2.0
+        return loss, loss_audio
+
+    def compute_mse_loss(self, dgz: DiscriminatorOutput, dx: DiscriminatorOutput | None = None):
+        generator = dx is None
+        if generator:
+            loss = self.config.disc_spec_weight * F.mse_loss(
+                dgz.spectrogram_results, torch.ones_like(dgz.spectrogram_results)
+            )
+            loss_audio = torch.zeros_like(loss)
+            for i in range(self.config.ndiscriminators):
+                loss_audio += self.config.disc_audio_weights[i] * F.mse_loss(
+                    dgz.audio_results[i], torch.ones_like(dgz.audio_results[i])
+                )
+        else:
+            fake_loss = self.config.disc_spec_weight * F.mse_loss(
+                dgz.spectrogram_results, torch.zeros_like(dgz.spectrogram_results)
+            )
+            real_loss = self.config.disc_spec_weight * F.mse_loss(
+                dx.spectrogram_results, torch.ones_like(dx.spectrogram_results)
+            )
+            fake_loss_audio = torch.zeros_like(fake_loss)
+            real_loss_audio = torch.zeros_like(real_loss)
+            for i in range(self.config.ndiscriminators):
+                fake_loss_audio += self.config.disc_audio_weights[i] * F.mse_loss(
+                    dgz.audio_results[i], torch.zeros_like(dgz.audio_results[i])
+                )
+                real_loss_audio += self.config.disc_audio_weights[i] * F.mse_loss(
+                    dx.audio_results[i], torch.ones_like(dx.audio_results[i])
+                )
+            loss = (fake_loss + real_loss) / 2.0
+            loss_audio = (fake_loss_audio + real_loss_audio) / 2.0
+        return loss, loss_audio
+
+    def compute_hinge_loss(self, dgz: DiscriminatorOutput, dx: DiscriminatorOutput | None = None):
+        generator = dx is None
+        if generator:
+            loss = self.config.disc_spec_weight * F.relu(1 - dgz.spectrogram_results).mean()
+            loss_audio = torch.zeros_like(loss)
+            for i in range(self.config.ndiscriminators):
+                loss_audio += self.config.disc_audio_weights[i] * F.relu(1 - dgz.audio_results[i]).mean()
+        else:
+            fake_loss = self.config.disc_spec_weight * F.relu(1 + dgz.spectrogram_results).mean()
+            real_loss = self.config.disc_spec_weight * F.relu(1 - dx.spectrogram_results).mean()
+            fake_loss_audio = torch.zeros_like(fake_loss)
+            real_loss_audio = torch.zeros_like(real_loss)
+            for i in range(self.config.ndiscriminators):
+                fake_loss_audio += self.config.disc_audio_weights[i] * F.relu(1 + dgz.audio_results[i]).mean()
+                real_loss_audio += self.config.disc_audio_weights[i] * F.relu(1 - dx.audio_results[i]).mean()
+            loss = (fake_loss + real_loss) / 2.0
+            loss_audio = (fake_loss_audio + real_loss_audio) / 2.0
+        return loss, loss_audio
+
+    def forward(self, dgz: DiscriminatorOutput, dx: DiscriminatorOutput | None = None):
+
         if self.config.disc_loss == "bce":
-            if generator:
-                loss = self.config.disc_spec_weight * F.binary_cross_entropy_with_logits(
-                    dgz.spectrogram_results, torch.ones_like(dgz.spectrogram_results)
-                )
-                for i in range(self.config.ndiscriminators):
-                    loss += self.config.disc_audio_weights[i] * F.binary_cross_entropy_with_logits(
-                        dgz.audio_results[i], torch.ones_like(dgz.audio_results[i])
-                    )
-            else:
-                fake_loss = self.config.disc_spec_weight * F.binary_cross_entropy_with_logits(
-                    dgz.spectrogram_results, torch.zeros_like(dgz.spectrogram_results)
-                )
-                real_loss = self.config.disc_spec_weight * F.binary_cross_entropy_with_logits(
-                    dx.spectrogram_results, torch.ones_like(dx.spectrogram_results)
-                )
-                for i in range(self.config.ndiscriminators):
-                    fake_loss += self.config.disc_audio_weights[i] * F.binary_cross_entropy_with_logits(
-                        dgz.audio_results[i], torch.zeros_like(dgz.audio_results[i])
-                    )
-                    real_loss += self.config.disc_audio_weights[i] * F.binary_cross_entropy_with_logits(
-                        dx.audio_results[i], torch.ones_like(dx.audio_results[i])
-                    )
-                loss = (fake_loss + real_loss) / 2.0
-            return loss
-
+            return self.compute_bce_loss(dgz, dx)
         if self.config.disc_loss == "mse":
-            if generator:
-                loss = self.config.disc_spec_weight * F.mse_loss(
-                    dgz.spectrogram_results, torch.ones_like(dgz.spectrogram_results)
-                )
-                for i in range(self.config.ndiscriminators):
-                    loss += self.config.disc_audio_weights[i] * F.mse_loss(
-                        dgz.audio_results[i], torch.ones_like(dgz.audio_results[i])
-                    )
-            else:
-                fake_loss = self.config.disc_spec_weight * F.mse_loss(
-                    dgz.spectrogram_results, torch.zeros_like(dgz.spectrogram_results)
-                )
-                real_loss = self.config.disc_spec_weight * F.mse_loss(
-                    dx.spectrogram_results, torch.ones_like(dx.spectrogram_results)
-                )
-                for i in range(self.config.ndiscriminators):
-                    fake_loss += self.config.disc_audio_weights[i] * F.mse_loss(
-                        dgz.audio_results[i], torch.zeros_like(dgz.audio_results[i])
-                    )
-                    real_loss += self.config.disc_audio_weights[i] * F.mse_loss(
-                        dx.audio_results[i], torch.ones_like(dx.audio_results[i])
-                    )
-                loss = (fake_loss + real_loss) / 2.0
-            return loss
-
+            return self.compute_mse_loss(dgz, dx)
         if self.config.disc_loss == "hinge":
-            if generator:
-                loss = self.config.disc_spec_weight * torch.mean(
-                    F.relu(1.0 - dgz.spectrogram_results)
-                )
-                for i in range(self.config.ndiscriminators):
-                    loss += self.config.disc_audio_weights[i] * torch.mean(
-                        F.relu(1.0 - dgz.audio_results[i])
-                    )
-            else:
-                fake_loss = self.config.disc_spec_weight * torch.mean(
-                    F.relu(1.0 + dgz.spectrogram_results)
-                )
-                real_loss = self.config.disc_spec_weight * torch.mean(
-                    F.relu(1.0 - dx.spectrogram_results)
-                )
-                for i in range(self.config.ndiscriminators):
-                    fake_loss += self.config.disc_audio_weights[i] * torch.mean(
-                        F.relu(1.0 + dgz.audio_results[i])
-                    )
-                    real_loss += self.config.disc_audio_weights[i] * torch.mean(
-                        F.relu(1.0 - dx.audio_results[i])
-                    )
-                loss = (fake_loss + real_loss) / 2.0
-            return loss
-
+            return self.compute_hinge_loss(dgz, dx)
         raise ValueError(f"Unsupported discriminator loss type: {self.config.disc_loss}")
 
 
@@ -425,8 +434,8 @@ def train(config_path: str, start_from_iter: int = 0):
             if step_count > config.disc_start:
                 with autocast('cuda'):
                     dgz = discriminator(pred_audio, pred_spec)
-                    disc_fake_loss = disc_loss(dgz)
-                g_loss += disc_fake_loss
+                    disc_fake_loss_aud, disc_fake_loss_spec = disc_loss(dgz)
+                g_loss += disc_fake_loss_aud + disc_fake_loss_spec
 
             # Perceptual Loss
             lpips_loss = torch.mean(perceptual_loss(pred_audio, target_audio))
@@ -437,13 +446,16 @@ def train(config_path: str, start_from_iter: int = 0):
             #####################################
 
             ######### Optimize Discriminator #######
-            disc_losses = []
+            disc_losses_aud = []
+            disc_losses_spec = []
             if step_count > config.disc_start:
                 with autocast('cuda'):
                     dgz = discriminator(pred_audio.detach(), pred_spec.detach())
                     dx = discriminator(target_audio, target_spec)
-                disc_fake_loss = disc_loss(dgz, dx)
-                disc_losses.append(disc_fake_loss.item())
+                disc_fake_loss_aud, disc_fake_loss_spec = disc_loss(dgz, dx)
+                disc_losses_aud.append(disc_fake_loss_aud.item())
+                disc_losses_spec.append(disc_fake_loss_spec.item())
+                disc_fake_loss = disc_fake_loss_aud + disc_fake_loss_spec
                 disc_fake_loss /= config.autoencoder_acc_steps
                 accelerator.backward(disc_fake_loss)
                 if step_count % config.autoencoder_acc_steps == 0:
@@ -461,7 +473,8 @@ def train(config_path: str, start_from_iter: int = 0):
                 "Perceptual Loss": lpips_loss.item(),
                 "Codebook Loss": model_output.codebook_loss.item(),
                 "Generator Loss": g_loss.item(),
-                "Discriminator Loss": disc_losses[-1] if disc_losses else 0.0
+                "Discriminator Audio Loss": disc_losses_aud[-1] if disc_losses_aud else 0.0,
+                "Discriminator Spectrogram Loss": disc_losses_spec[-1] if disc_losses_spec else 0.0,
             }, step=step_count)
 
             if step_count % config.save_steps == 0:
