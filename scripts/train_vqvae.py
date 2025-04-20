@@ -248,9 +248,13 @@ def validate(
                 break
 
             ###  Copy pasted from training loop ###
-            print(target_audio.shape)
-            batch_size = target_audio.shape[0]
             target_audio = target_audio.flatten(0, 1)  # im shape: B, 4, L
+
+            assert isinstance(target_audio, torch.Tensor)
+            assert target_audio.dim() == 3  # im shape: B, nsources/2=4, L
+            assert target_audio.shape[1] == config.nsources / 2
+
+            batch_size = target_audio.shape[0]
             target_audio = target_audio.float().to(device)
             target_spec = stft.forward(
                 target_audio.float().flatten(0, 1)  # B*4, L
@@ -384,8 +388,6 @@ def train(config_path: str, start_from_iter: int = 0):
             if step_count >= config.steps + start_from_iter:
                 stop_training = True
                 break
-
-            print(target_audio.shape)
 
             target_audio = target_audio.flatten(0, 1)  # im shape: B, 4, L
 
