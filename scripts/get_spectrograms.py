@@ -24,7 +24,7 @@ except ImportError:
     except ImportError:
         raise ImportError("Please install the pytube library to download the audio. You can install it using `pip install pytube` or `pip install pytubefix`")
 
-from AutoMasher.fyp.audio.dataset import DatasetEntry, SongDataset, create_entry, DatasetEntryEncoder
+from AutoMasher.fyp.audio.dataset import DatasetEntry, SongDataset, create_entry
 from AutoMasher.fyp import Audio
 from AutoMasher.fyp.audio.analysis import BeatAnalysisResult, DeadBeatKernel, analyse_beat_transformer
 from AutoMasher.fyp.audio.separation import DemucsAudioSeparator, DemucsCollection

@@ -38,6 +38,7 @@ class VAEConfig:
     disc_start: int = 3
     disc_spec_weight: float = 0.5
     disc_audio_weights: tuple[float, ...] = (1.0, 1.0, 1.0, 1.0)
+    disc_gloss_weight: float = 0.5
     codebook_weight: float = 1
     commitment_beta: float = 0.2
     perceptual_weight: int = 1

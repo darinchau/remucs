@@ -31,6 +31,7 @@ ds_batch_size: 3 # Batch size for dataset loading
 disc_start: 2048     # Start training discriminator after this many steps. Set to a very small number for testing
 disc_spec_weight: 3      # Weight of discriminator loss
 disc_audio_weights: [1, 1, 1, 1] # Weights for each audio discriminator
+disc_gloss_weight: 0.5
 codebook_weight: 1    # Weight of codebook loss
 commitment_beta: 0.2
 perceptual_weight: 1 # Weight for the perceptual loss

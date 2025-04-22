@@ -437,7 +437,7 @@ def train(config_path: str, start_from_iter: int = 0):
                 with autocast('cuda'):
                     dgz = discriminator(pred_audio, pred_spec)
                     disc_fake_loss_aud, disc_fake_loss_spec = disc_loss(dgz)
-                g_loss += disc_fake_loss_aud + disc_fake_loss_spec
+                g_loss += config.disc_gloss_weight * (disc_fake_loss_aud + disc_fake_loss_spec)
                 g_losses_aud.append(disc_fake_loss_aud.item())
                 g_losses_spec.append(disc_fake_loss_spec.item())
 
@@ -453,6 +453,7 @@ def train(config_path: str, start_from_iter: int = 0):
             disc_losses_aud = []
             disc_losses_spec = []
             if step_count > config.disc_start:
+                discriminator.train()
                 with autocast('cuda'):
                     dgz = discriminator(pred_audio.detach(), pred_spec.detach())
                     dx = discriminator(target_audio, target_spec)
@@ -465,6 +466,7 @@ def train(config_path: str, start_from_iter: int = 0):
                 if step_count % config.autoencoder_acc_steps == 0:
                     optimizer_d.step()
                     optimizer_d.zero_grad()
+                discriminator.eval()
             #####################################
 
             if step_count % config.autoencoder_acc_steps == 0:
