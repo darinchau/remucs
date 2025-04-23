@@ -266,7 +266,7 @@ def validate(
 
             assert isinstance(target_audio, torch.Tensor)
             assert target_audio.dim() == 3  # im shape: B, nsources/2=4, L
-            assert target_audio.shape[1] == config.nsources / 2
+            assert target_audio.shape[1] == config.nstems
 
             batch_size = target_audio.shape[0]
             target_audio = target_audio.float().to(device)
@@ -417,25 +417,33 @@ def train(config_path: str, start_from_iter: int = 0):
             target_audio = target_audio.flatten(0, 1)  # im shape: B, 4, L
 
             assert isinstance(target_audio, torch.Tensor)
-            assert target_audio.dim() == 3  # im shape: B, nsources/2=4, L
-            assert target_audio.shape[1] == config.nsources / 2
+            assert target_audio.dim() == 3  # im shape: B, S, L
+            assert target_audio.shape[1] == config.nstems
 
             batch_size = target_audio.shape[0]
             target_audio = target_audio.float().to(device)
             target_spec = stft.forward(
-                target_audio.float().flatten(0, 1)  # B*4, L
+                target_audio.float().flatten(0, 1)  # B*S, L
             )
-            target_spec = torch.view_as_real(target_spec).permute(0, 3, 1, 2)  # B*4, 2, N, T
-            target_spec = target_spec.unflatten(0, (batch_size, 4)).flatten(1, 2).float().to(device)  # B, 4*2, N, T
+            if config.do_phase_prediction:
+                target_spec = torch.view_as_real(target_spec).permute(0, 3, 1, 2)  # B*S, 2, N, T
+                target_spec = target_spec.unflatten(0, (batch_size, config.nstems)).flatten(1, 2).float().to(device)  # B, S*2, N, T
+            else:
+                target_spec = target_spec.abs().unflatten(0, (batch_size, config.nstems))  # B, S, N, T
 
             # Fetch autoencoders output(reconstructions)
             with autocast('cuda'):
                 model_output: VAEOutput = model(target_spec)
 
             pred_spec = model_output.output
-            pred_audio = stft.inverse(
-                torch.view_as_complex(pred_spec.float().unflatten(1, (4, 2)).flatten(0, 1).permute(0, 2, 3, 1).contiguous())
-            ).unflatten(0, (batch_size, 4))
+            if config.do_phase_prediction:
+                pred_audio = stft.inverse(
+                    torch.view_as_complex(pred_spec.float().unflatten(1, (config.nstems, 2)).flatten(0, 1).permute(0, 2, 3, 1).contiguous())
+                ).unflatten(0, (batch_size, config.nstems))
+            else:
+                pred_audio = stft.griffin_lim(
+                    pred_spec.float().flatten(0, 1)
+                ).unflatten(0, (batch_size, config.nstems))
 
             ######### Optimize Generator ##########
             # L2 Loss

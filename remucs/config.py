@@ -90,7 +90,7 @@ class VAEConfig:
         assert self.ndiscriminators == len(self.disc_audio_weights)
 
     def get_vae_save_path(self, step: int) -> str:
-        path = os.path.join(self.output_dir, self.run_name, f"step-{step:06d}", self.vqvae_autoencoder_ckpt_name)
+        path = os.path.join(self.output_dir, self.run_name, f"step-{step:06d}", self.ckpt_name)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         return path
 

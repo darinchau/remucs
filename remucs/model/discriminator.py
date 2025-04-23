@@ -153,7 +153,7 @@ class Discriminator(nn.Module):
     def __init__(self, config: VAEConfig):
         super().__init__()
         self.audio_discriminator = AudioDiscriminator(
-            config.nsources // 2, config.ndiscriminators, config.nfilters, config.naudio_disc_layers, config.audio_disc_downsampling_factor
+            config.nstems, config.ndiscriminators, config.nfilters, config.naudio_disc_layers, config.audio_disc_downsampling_factor
         )
         self.spectrogram_discriminator = SpectrogramPatchModel(
             config.nsources, config.nfft, config.ntimeframes, config.nspec_disc_patches
