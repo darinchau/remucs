@@ -161,14 +161,17 @@ class DiscriminatorLoss(nn.Module):
         return loss, loss_audio
 
     def forward(self, dgz: DiscriminatorOutput, dx: DiscriminatorOutput | None = None):
-
+        loss = loss_audio = None
         if self.config.disc_loss == "bce":
-            return self.compute_bce_loss(dgz, dx)
-        if self.config.disc_loss == "mse":
-            return self.compute_mse_loss(dgz, dx)
-        if self.config.disc_loss == "hinge":
-            return self.compute_hinge_loss(dgz, dx)
-        raise ValueError(f"Unsupported discriminator loss type: {self.config.disc_loss}")
+            loss, loss_audio = self.compute_bce_loss(dgz, dx)
+        elif self.config.disc_loss == "mse":
+            loss, loss_audio = self.compute_mse_loss(dgz, dx)
+        elif self.config.disc_loss == "hinge":
+            loss, loss_audio = self.compute_hinge_loss(dgz, dx)
+        else:
+            raise ValueError(f"Unsupported discriminator loss type: {self.config.disc_loss}")
+        loss_audio = loss_audio / len(self.config.disc_audio_weights)  # See if this helps with regularization
+        return loss, loss_audio
 
 
 def load_lpips(config: VAEConfig):
@@ -179,9 +182,11 @@ def load_lpips(config: VAEConfig):
             self.in_sr = in_sr
 
         def forward(self, pred_audio, targ_audio):
-            pred = self.lpips((pred_audio, self.in_sr))
-            targ = self.lpips((targ_audio, self.in_sr))
-            return F.mse_loss(pred, targ)
+            pred1 = self.lpips((pred_audio, self.in_sr))
+            targ1 = self.lpips((targ_audio, self.in_sr))
+            pred2 = self.lpips((pred_audio, self.lpips.input_sr))
+            targ2 = self.lpips((targ_audio, self.lpips.input_sr))
+            return (F.mse_loss(pred1, targ1) + F.mse_loss(pred2, targ2)) * 0.5
 
     model = _PerceptualLossWrapper(config.sample_rate)
     model = model.eval().to(device)
@@ -353,8 +358,19 @@ def train(config_path: str, start_from_iter: int = 0):
 
     discriminator = Discriminator(config).to(device)
 
+    def warmup_lr_scheduler(optimizer, warmup_steps, base_lr):
+        def lr_lambda(step):
+            if step < warmup_steps:
+                return step / warmup_steps
+            return 1.0
+        return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+
     optimizer_d = Adam(discriminator.parameters(), lr=config.autoencoder_lr, betas=(0.5, 0.999))
     optimizer_g = Adam(model.parameters(), lr=config.autoencoder_lr, betas=(0.5, 0.999))
+
+    warmup_steps = 500
+    scheduler_d = warmup_lr_scheduler(optimizer_d, warmup_steps, config.autoencoder_lr)
+    scheduler_g = warmup_lr_scheduler(optimizer_g, warmup_steps, config.autoencoder_lr)
 
     accelerator = Accelerator(mixed_precision="bf16")
 
@@ -437,7 +453,7 @@ def train(config_path: str, start_from_iter: int = 0):
                 with autocast('cuda'):
                     dgz = discriminator(pred_audio, pred_spec)
                     disc_fake_loss_aud, disc_fake_loss_spec = disc_loss(dgz)
-                g_loss += config.disc_gloss_weight * (disc_fake_loss_aud + disc_fake_loss_spec)
+                g_loss += config.disc_g_loss_weight * (disc_fake_loss_aud + disc_fake_loss_spec)
                 g_losses_aud.append(disc_fake_loss_aud.item())
                 g_losses_spec.append(disc_fake_loss_spec.item())
 
@@ -483,6 +499,8 @@ def train(config_path: str, start_from_iter: int = 0):
                 "Total Generator Loss": g_loss.item(),
                 "Discriminator Audio Loss": disc_losses_aud[-1] if disc_losses_aud else 0.0,
                 "Discriminator Spectrogram Loss": disc_losses_spec[-1] if disc_losses_spec else 0.0,
+                "Discriminator Learning Rate": optimizer_g.param_groups[0]['lr'],
+                "Generator Learning Rate": optimizer_d.param_groups[0]['lr'],
             }, step=step_count)
 
             if step_count % config.save_steps == 0:
@@ -490,6 +508,9 @@ def train(config_path: str, start_from_iter: int = 0):
                 disc_save_path = VAEConfig.get_disc_save_path(config, step_count)
                 torch.save(model.state_dict(), model_save_path)
                 torch.save(discriminator.state_dict(), disc_save_path)
+
+            scheduler_g.step()
+            scheduler_d.step()
 
             ########### Perform Validation #############
             validate(config, model, val_data_loader, reconstruction_loss, perceptual_loss, step_count, stft)

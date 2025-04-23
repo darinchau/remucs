@@ -7,16 +7,14 @@ from .stft import STFT
 
 @dataclass(frozen=True)
 class VAEConfig:
-    nbars: int = 4
-    nsources: int = 8
-    num_workers_ds: int = 0
+    nstems: int = 8
     dataset_dir: str = "E:/audio-dataset-v3"
     output_dir: str = "E:/output"
     val_count: int = 100
     sample_rate: int = 44100
     ntimeframes: int = 768
     nfft: int = 1025
-
+    do_phase_prediction: bool = False
     z_channels: int = 4
     codebook_size: int = 1024
     nquantizers: int = 4
@@ -30,7 +28,6 @@ class VAEConfig:
     num_mid_layers: int = 2
     num_up_layers: int = 2
     gradient_checkpointing: bool = True
-
     seed: int = 1943
     num_workers_dl: int = 0
     batch_size: int = 1
@@ -38,7 +35,7 @@ class VAEConfig:
     disc_start: int = 3
     disc_spec_weight: float = 0.5
     disc_audio_weights: tuple[float, ...] = (1.0, 1.0, 1.0, 1.0)
-    disc_gloss_weight: float = 0.5
+    disc_g_loss_weight: float = 0.5
     codebook_weight: float = 1
     commitment_beta: float = 0.2
     perceptual_weight: int = 1
@@ -51,11 +48,16 @@ class VAEConfig:
     audio_disc_downsampling_factor: int = 4
     nspec_disc_patches: int = 4
     save_steps: int = 512
-    vqvae_autoencoder_ckpt_name: str = 'vqvae_autoencoder_ckpt.pth'
+    ckpt_name: str = 'vqvae_autoencoder_ckpt.pth'
     run_name: str = "vqvae-training"
     disc_loss: str = "bce"
     val_steps: int = 512
     validate_at_step_1: bool = True
+
+    @property
+    def nsources(self):
+        """Returns the number of spectrograms that we will work with"""
+        return 2 * self.nstems if self.do_phase_prediction else self.nstems
 
     @property
     def audio_length(self) -> int:
